@@ -28,11 +28,13 @@ public static class Teleop
 
         long lastSend = 0;
         var wasMoving = false;
+        var startMs = Environment.TickCount64;
         try
         {
             while (!token.IsCancellationRequested)
             {
-                if (Down(VkX)) break;
+                // 启动后 0.8 秒内忽略 X，避免残留按键或误触导致立即退出
+                if (Environment.TickCount64 - startMs > 800 && Down(VkX)) break;
 
                 double v, w;
                 if (Down(VkSpace)) { v = 0; w = 0; }
@@ -64,7 +66,7 @@ public static class Teleop
         finally
         {
             try { await writer.WriteLineAsync("0 0 0.05"); } catch { }
-            Console.WriteLine("\n已停车");
+            Console.WriteLine("\n遥控已结束，程序退出（agent 已关闭）");
         }
         return 0;
     }
