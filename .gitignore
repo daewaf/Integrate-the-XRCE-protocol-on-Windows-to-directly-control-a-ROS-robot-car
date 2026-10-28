@@ -1,21 +1,15 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
+# .NET 构建产物
+bin/
+obj/
+build_check/
+*.user
+.vs/
+TestResults/
 
 # 运行日志
 *.log
 *.err
-agent_runtime.log
 
-# 调试产物
-logs/
-captures/
-render_qa/
-
-# 编辑器/系统
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
+# Python 测试缓存
+__pycache__/
+*.py[cod]
