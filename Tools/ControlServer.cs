@@ -56,6 +56,12 @@ public sealed class ControlServer : IDisposable
                 line = line.Trim();
                 if (line.Length == 0) continue;
 
+                if (line.Equals("status", StringComparison.OrdinalIgnoreCase))
+                {
+                    await writer.WriteLineAsync(_agent.StatusText());
+                    continue;
+                }
+
                 var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length < 2 ||
                     !double.TryParse(parts[0], out var v) ||
@@ -68,6 +74,7 @@ public sealed class ControlServer : IDisposable
 
                 if (Math.Abs(v) < 1e-9 && Math.Abs(w) < 1e-9) _agent.StopTarget();
                 else _agent.SetTarget(v, w, d);
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] CTRL {v} {w} {d}");
                 await writer.WriteLineAsync($"OK {v} {w} {d}");
             }
         }

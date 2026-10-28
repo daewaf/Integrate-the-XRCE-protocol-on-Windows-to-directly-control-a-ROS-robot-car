@@ -98,6 +98,7 @@ public sealed class XrceAgent : IDisposable
     private (double V, double W) _twistTarget;
     private long _twistDeadlineMs;
     private int _dataRequestId;
+    private (double X, double Y, double Yaw)? _lastOdom;
 
     public int UdpPort { get; }
     public bool Verbose { get; set; } = true;
@@ -432,6 +433,7 @@ public sealed class XrceAgent : IDisposable
             try
             {
                 var (x, y, yaw) = MsgCodec.OdomPose(data);
+                _lastOdom = (x, y, yaw);
                 Log($"    odom x={x:0.000} y={y:0.000} yaw={yaw:0.0}deg");
             }
             catch (Exception ex)
@@ -499,6 +501,20 @@ public sealed class XrceAgent : IDisposable
             }
             catch { /* 忽略单次发送失败 */ }
         }
+    }
+
+    public string StatusText()
+    {
+        var now = Environment.TickCount64;
+        var sessions = _sessions.Values.ToList();
+        var active = sessions.Where(s => now - s.LastRxMs < 5000).ToList();
+        var readers = active.Count(s => s.FindReader("cmd_vel") is not null);
+        (double V, double W) twist;
+        lock (_twistLock) twist = _twistTarget;
+        var pose = _lastOdom is null
+            ? "none"
+            : $"{_lastOdom.Value.X:0.000},{_lastOdom.Value.Y:0.000},{_lastOdom.Value.Yaw:0.0}";
+        return $"sessions={sessions.Count} active={active.Count} cmd_vel_readers={readers} odom={pose} twist={twist.V:0.00},{twist.W:0.00}";
     }
 
     public void Dispose()

@@ -32,6 +32,7 @@ public static class Program
                 case "--agent-only": mode = "agent"; break;
                 case "--check": mode = "check"; break;
                 case "--selftest": mode = "selftest"; break;
+                case "--status": mode = "status"; break;
                 case "--help" or "-h": PrintHelp(); return 0;
                 default:
                     Console.WriteLine($"未知参数: {args[i]}");
@@ -41,6 +42,26 @@ public static class Program
         }
 
         if (mode == "selftest") return SelfTest();
+
+        if (mode == "status")
+        {
+            try
+            {
+                using var client = new TcpClient();
+                await client.ConnectAsync(IPAddress.Loopback, controlPort);
+                await using var stream = client.GetStream();
+                using var writer = new StreamWriter(stream) { AutoFlush = true };
+                using var reader = new StreamReader(stream);
+                await writer.WriteLineAsync("status");
+                Console.WriteLine(await reader.ReadLineAsync() ?? "(无响应)");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"查询失败: {ex.Message}");
+                return 1;
+            }
+        }
 
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) =>
@@ -104,6 +125,7 @@ public static class Program
           FishBotXrceAgent --agent-only    只运行 agent
           FishBotXrceAgent --check         启动检查
           FishBotXrceAgent --selftest      运行编解码自检
+          FishBotXrceAgent --status        查询运行中 agent 的状态
           --host <ip>                      UDP 绑定地址（默认 0.0.0.0）
           --port <n>                       UDP 端口（默认 8888）
           --control-port <n>               本机 TCP 控制口（默认 8898）
