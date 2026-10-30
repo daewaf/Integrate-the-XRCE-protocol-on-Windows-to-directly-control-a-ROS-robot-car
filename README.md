@@ -47,6 +47,9 @@ stop                 # 立即停车
 
 完整协议、响应格式与调用示例见 [docs/API.md](docs/API.md)。
 
+控制对象（固件节点、话题、XRCE 实体 ID）说明见
+[docs/控制对象说明.md](docs/控制对象说明.md)。
+
 ### VS Code
 
 1. 安装扩展 **C# Dev Kit**（会自动带上 C# 扩展）。
