@@ -58,11 +58,53 @@ public sealed class ControlServer : IDisposable
 
                 if (line.Equals("status", StringComparison.OrdinalIgnoreCase))
                 {
+                    await writer.WriteLineAsync(_agent.StatusJson());
+                    continue;
+                }
+                if (line.Equals("status text", StringComparison.OrdinalIgnoreCase))
+                {
                     await writer.WriteLineAsync(_agent.StatusText());
                     continue;
                 }
 
                 var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                var cmd = parts[0].ToLowerInvariant();
+
+                if (cmd == "stop")
+                {
+                    _agent.StopMotion();
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] CTRL stop");
+                    await writer.WriteLineAsync("OK stopped");
+                    continue;
+                }
+
+                if (cmd == "speed" && parts.Length >= 3 &&
+                    double.TryParse(parts[1], out var sl) &&
+                    double.TryParse(parts[2], out var sa))
+                {
+                    _agent.SetSpeeds(sl, sa);
+                    await writer.WriteLineAsync($"OK speed {Math.Abs(sl)} {Math.Abs(sa)}");
+                    continue;
+                }
+
+                if (cmd == "forward" && parts.Length >= 2 &&
+                    double.TryParse(parts[1], out var meters))
+                {
+                    var speed = parts.Length >= 3 && double.TryParse(parts[2], out var fSpeed) ? fSpeed : 0.05;
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] CTRL forward {meters} {speed}");
+                    await writer.WriteLineAsync(await _agent.MoveForwardAsync(meters, speed));
+                    continue;
+                }
+
+                if (cmd == "turn" && parts.Length >= 2 &&
+                    double.TryParse(parts[1], out var degrees))
+                {
+                    var speed = parts.Length >= 3 && double.TryParse(parts[2], out var tSpeed) ? tSpeed : 0.3;
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] CTRL turn {degrees} {speed}");
+                    await writer.WriteLineAsync(await _agent.TurnAsync(degrees, speed));
+                    continue;
+                }
+
                 if (parts.Length < 2 ||
                     !double.TryParse(parts[0], out var v) ||
                     !double.TryParse(parts[1], out var w))
@@ -72,7 +114,12 @@ public sealed class ControlServer : IDisposable
                 }
                 var d = parts.Length > 2 && double.TryParse(parts[2], out var dd) ? dd : 0.5;
 
-                if (Math.Abs(v) < 1e-9 && Math.Abs(w) < 1e-9) _agent.StopTarget();
+                if (_agent.IsBusy)
+                {
+                    await writer.WriteLineAsync("ERR busy");
+                    continue;
+                }
+                if (Math.Abs(v) < 1e-9 && Math.Abs(w) < 1e-9) _agent.StopMotion();
                 else _agent.SetTarget(v, w, d);
                 Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] CTRL {v} {w} {d}");
                 await writer.WriteLineAsync($"OK {v} {w} {d}");

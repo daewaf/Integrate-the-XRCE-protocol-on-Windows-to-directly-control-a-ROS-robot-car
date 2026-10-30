@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 
 namespace FishBotXrceAgent.Xrce;
 
@@ -99,6 +100,13 @@ public sealed class XrceAgent : IDisposable
     private long _twistDeadlineMs;
     private int _dataRequestId;
     private (double X, double Y, double Yaw)? _lastOdom;
+    private long _lastOdomMs;
+    private readonly object _odomLock = new();
+    private readonly object _motionLock = new();
+    private string _motionState = "idle";
+    private CancellationTokenSource? _motionCts;
+    private double _defaultLinear = 0.05;
+    private double _defaultAngular = 0.3;
 
     public int UdpPort { get; }
     public bool Verbose { get; set; } = true;
@@ -433,7 +441,11 @@ public sealed class XrceAgent : IDisposable
             try
             {
                 var (x, y, yaw) = MsgCodec.OdomPose(data);
-                _lastOdom = (x, y, yaw);
+                lock (_odomLock)
+                {
+                    _lastOdom = (x, y, yaw);
+                    _lastOdomMs = Environment.TickCount64;
+                }
                 Log($"    odom x={x:0.000} y={y:0.000} yaw={yaw:0.0}deg");
             }
             catch (Exception ex)
@@ -459,6 +471,192 @@ public sealed class XrceAgent : IDisposable
         {
             _twistTarget = (0, 0);
             _twistDeadlineMs = 0;
+        }
+    }
+
+    public bool IsBusy
+    {
+        get { lock (_motionLock) return _motionState != "idle"; }
+    }
+
+    public void SetSpeeds(double linear, double angular)
+    {
+        _defaultLinear = Math.Clamp(Math.Abs(linear), 0.02, 0.2);
+        _defaultAngular = Math.Clamp(Math.Abs(angular), 0.1, 1.0);
+    }
+
+    private bool TryBeginMotion(string name, out CancellationTokenSource cts)
+    {
+        lock (_motionLock)
+        {
+            if (_motionState != "idle")
+            {
+                cts = null!;
+                return false;
+            }
+            _motionState = name;
+            _motionCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+            cts = _motionCts;
+            return true;
+        }
+    }
+
+    private void EndMotion()
+    {
+        lock (_motionLock)
+        {
+            _motionState = "idle";
+            _motionCts?.Dispose();
+            _motionCts = null;
+        }
+    }
+
+    public void StopMotion()
+    {
+        lock (_motionLock) _motionCts?.Cancel();
+        StopTarget();
+    }
+
+    private bool TryGetOdom(out (double X, double Y, double Yaw) pose, out long ageMs)
+    {
+        lock (_odomLock)
+        {
+            pose = _lastOdom ?? default;
+            ageMs = _lastOdomMs == 0 ? long.MaxValue : Environment.TickCount64 - _lastOdomMs;
+            return _lastOdom is not null && ageMs < 1000;
+        }
+    }
+
+    private void SetTwistInternal(double v, double w)
+    {
+        lock (_twistLock)
+        {
+            _twistTarget = (v, w);
+            _twistDeadlineMs = Environment.TickCount64 + 300;
+        }
+    }
+
+    private static double NormalizeDeg(double d)
+    {
+        while (d > 180) d -= 360;
+        while (d < -180) d += 360;
+        return d;
+    }
+
+    /// <summary>闭环前进/后退：odom 位移反馈。</summary>
+    public async Task<string> MoveForwardAsync(double meters, double speed)
+    {
+        if (Math.Abs(meters) < 1e-6) return "ERR distance must be non-zero";
+        if (!TryBeginMotion("forward", out var cts)) return "ERR busy";
+        try
+        {
+            var waitUntil = Environment.TickCount64 + 2000;
+            while (!TryGetOdom(out _, out _))
+            {
+                if (Environment.TickCount64 > waitUntil) return "ERR no odom";
+                await Task.Delay(50);
+            }
+
+            TryGetOdom(out var start, out _);
+            var heading = start.Yaw * Math.PI / 180.0;
+            var maxSpeed = Math.Clamp(Math.Abs(speed), 0.02, 0.2);
+            var tolerance = 0.005;
+            var timeoutMs = (long)(Math.Abs(meters) / maxSpeed * 1000 + 5000);
+            var startMs = Environment.TickCount64;
+            long lastLog = 0;
+
+            while (!cts.IsCancellationRequested)
+            {
+                if (Environment.TickCount64 - startMs > timeoutMs) return "ERR timeout";
+                if (!TryGetOdom(out var now, out var age))
+                {
+                    await Task.Delay(50);
+                    continue;
+                }
+
+                var dx = now.X - start.X;
+                var dy = now.Y - start.Y;
+                var traveled = dx * Math.Cos(heading) + dy * Math.Sin(heading);
+                var remaining = meters - traveled;
+                if (Math.Abs(remaining) <= tolerance)
+                {
+                    StopTarget();
+                    return $"DONE forward {meters:0.###}m traveled={traveled:0.###}m " +
+                           $"pose={now.X:0.000},{now.Y:0.000},{now.Yaw:0.0}";
+                }
+
+                var v = Math.Clamp(remaining * 2.0, -maxSpeed, maxSpeed);
+                SetTwistInternal(v, 0);
+                if (Environment.TickCount64 - lastLog > 500)
+                {
+                    lastLog = Environment.TickCount64;
+                    Log($"    forward remaining={remaining:0.000}m v={v:0.000} odom_age={age}ms");
+                }
+                await Task.Delay(50);
+            }
+            return "ERR stopped";
+        }
+        finally
+        {
+            StopTarget();
+            EndMotion();
+        }
+    }
+
+    /// <summary>闭环原地转向：odom yaw 反馈。</summary>
+    public async Task<string> TurnAsync(double degrees, double angularSpeed)
+    {
+        if (Math.Abs(degrees) < 0.1) return "ERR angle must be non-zero";
+        if (!TryBeginMotion("turn", out var cts)) return "ERR busy";
+        try
+        {
+            var waitUntil = Environment.TickCount64 + 2000;
+            while (!TryGetOdom(out _, out _))
+            {
+                if (Environment.TickCount64 > waitUntil) return "ERR no odom";
+                await Task.Delay(50);
+            }
+
+            TryGetOdom(out var start, out _);
+            var targetYaw = start.Yaw + degrees;
+            var maxW = Math.Clamp(Math.Abs(angularSpeed), 0.1, 1.0);
+            var toleranceDeg = 1.5;
+            var timeoutMs = (long)(Math.Abs(degrees) / maxW * 1000 + 5000);
+            var startMs = Environment.TickCount64;
+            long lastLog = 0;
+
+            while (!cts.IsCancellationRequested)
+            {
+                if (Environment.TickCount64 - startMs > timeoutMs) return "ERR timeout";
+                if (!TryGetOdom(out var now, out var age))
+                {
+                    await Task.Delay(50);
+                    continue;
+                }
+
+                var err = NormalizeDeg(targetYaw - now.Yaw);
+                if (Math.Abs(err) <= toleranceDeg)
+                {
+                    StopTarget();
+                    return $"DONE turn {degrees:0.##}deg yaw={now.Yaw:0.0} " +
+                           $"pose={now.X:0.000},{now.Y:0.000},{now.Yaw:0.0}";
+                }
+
+                var w = Math.Clamp(err * 0.03, -maxW, maxW);
+                SetTwistInternal(0, w);
+                if (Environment.TickCount64 - lastLog > 500)
+                {
+                    lastLog = Environment.TickCount64;
+                    Log($"    turn remaining={err:0.0}deg w={w:0.000} odom_age={age}ms");
+                }
+                await Task.Delay(50);
+            }
+            return "ERR stopped";
+        }
+        finally
+        {
+            StopTarget();
+            EndMotion();
         }
     }
 
@@ -511,10 +709,51 @@ public sealed class XrceAgent : IDisposable
         var readers = active.Count(s => s.FindReader("cmd_vel") is not null);
         (double V, double W) twist;
         lock (_twistLock) twist = _twistTarget;
-        var pose = _lastOdom is null
-            ? "none"
-            : $"{_lastOdom.Value.X:0.000},{_lastOdom.Value.Y:0.000},{_lastOdom.Value.Yaw:0.0}";
-        return $"sessions={sessions.Count} active={active.Count} cmd_vel_readers={readers} odom={pose} twist={twist.V:0.00},{twist.W:0.00}";
+        string pose;
+        string motion;
+        lock (_odomLock)
+        {
+            pose = _lastOdom is null
+                ? "none"
+                : $"{_lastOdom.Value.X:0.000},{_lastOdom.Value.Y:0.000},{_lastOdom.Value.Yaw:0.0}";
+        }
+        lock (_motionLock) motion = _motionState;
+        return $"state={motion} sessions={sessions.Count} active={active.Count} " +
+               $"cmd_vel_readers={readers} odom={pose} twist={twist.V:0.00},{twist.W:0.00}";
+    }
+
+    public string StatusJson()
+    {
+        var now = Environment.TickCount64;
+        var sessions = _sessions.Values.ToList();
+        var active = sessions.Where(s => now - s.LastRxMs < 5000).ToList();
+        var readers = active.Count(s => s.FindReader("cmd_vel") is not null);
+        (double X, double Y, double Yaw)? pose;
+        long age;
+        string motion;
+        lock (_odomLock)
+        {
+            pose = _lastOdom;
+            age = _lastOdomMs == 0 ? -1 : now - _lastOdomMs;
+        }
+        lock (_motionLock) motion = _motionState;
+
+        return JsonSerializer.Serialize(new
+        {
+            ok = true,
+            state = motion,
+            pose = pose is null ? null : new
+            {
+                x = Math.Round(pose.Value.X, 3),
+                y = Math.Round(pose.Value.Y, 3),
+                yaw = Math.Round(pose.Value.Yaw, 1),
+            },
+            odom_age_ms = age,
+            speed = new { linear = _defaultLinear, angular = _defaultAngular },
+            sessions = sessions.Count,
+            active = active.Count,
+            cmd_vel_reader = readers > 0,
+        });
     }
 
     public void Dispose()
