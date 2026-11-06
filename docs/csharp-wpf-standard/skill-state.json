@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "package_name": "csharp-wpf-development",
+  "package_version": "1.1.0",
+  "standard_version": "1.1",
+  "managed_files": [
+    {
+      "relative_path": "docs/csharp-wpf-standard/code-standard.md",
+      "sha256": "553a225495620cdf9098c2d9f0038062ffa5af9ba33f0092447ce8c343765809"
+    },
+    {
+      "relative_path": "docs/csharp-wpf-standard/project-scenarios.md",
+      "sha256": "6eec0a28f0f0cf1346ed316bf3b7fe8f037fef323358a82651f9b5fc0f1340b6"
+    },
+    {
+      "relative_path": "docs/csharp-wpf-standard/adoption.md",
+      "sha256": "96544f2b06ed3e48fc18b411243ab752769a8e06f8041bc6ddf1b69e36a9d5e0"
+    },
+    {
+      "relative_path": "docs/csharp-wpf-standard/editorconfig.template",
+      "sha256": "aef650133a6fc5054c30a6afae15587a3bd6f824025a5102e0a1bad41481533e"
+    }
+  ],
+  "agents_block_sha256": "4408d9401bd2fb45b241ee8da33f19110ce8fe015530ccead504a79aa2d2cbb9",
+  "scope": "Reference deployment only. Code migration has not been performed or verified."
+}

@@ -1,92 +1,64 @@
-# 纯 Python XRCE-DDS Agent（Windows 直连 FishBot）
+# FishBot 独立四工具控制台
 
-不依赖 WSL、不依赖 ROS2，直接在主控板和 Windows 之间实现 XRCE-DDS 协议转换。
+独立 WPF / .NET 8 项目。仅包含四个小车工具及其调用界面；XRCE agent 作为另一个进程单独运行。
+不依赖 XingqiaoSdkTest 项目、模型服务或 API Key，无第三方 NuGet 包。
 
-## 当前状态（已在真实 FishBot 上验证）
+## 使用
 
-| 模块 | 状态 |
-|---|---|
-| 消息帧 / 子消息编解码 | ✅ 单测通过 |
-| CDR 与 Twist 序列化 | ✅ 单测通过 |
-| CREATE_CLIENT 握手与 STATUS_AGENT | ✅ 真实主控板通过 |
-| CREATE / DELETE → STATUS | ✅ 真实主控板通过 |
-| INFO / HEARTBEAT / ACKNACK / TIMESTAMP_REPLY | ✅ 会话稳定，无重建 |
-| `/cmd_vel` 下发（DATA） | ✅ 实车前后左右均生效 |
-| `/odom` 解析 | ✅ x/y/yaw 实时解析 |
+1. 双击 `启动XRCE.cmd`，保持该终端运行。此脚本运行相邻的 `xrce_csharp_agent` 项目；如果已启动 agent，不要重复运行。
+2. 双击 `启动界面.cmd`，或运行 `bin/Release/net8.0-windows/FishBotToolPanel.exe`。
+3. 点击“查询状态”，查看 agent 连通性、小车连接、里程计位姿和当前运动状态。
+4. 填写距离与速度后点击“执行位移”，或填写转角与角速度后点击“执行转向”。运动期间仍可查询状态、点击“立即停车”。
 
-实测（2026-10-25）：前进 0.05 m/s × 0.4 s → odom x +1.6 cm；左转 0.3 rad/s × 0.4 s → yaw +6.5°；右转与后退同样生效，会话 DELETE 次数为 0。
+默认控制端点为 `127.0.0.1:8898`。界面不启动、不退出 XRCE agent。
+每个动作等待 agent 返回完成或失败；工具在超时、取消或通信异常时另建连接尝试停车。
+关闭窗口时取消本窗口正在等待的运动，并等待停车尝试完成，最长增加约两秒。
+停车确认表示 agent 已接受停车请求，不是传感器测得的静止状态。
 
-## 快速开始（Windows，无需 WSL/ROS2）
+## 四个工具
+
+| 工具名 | 参数 | 功能 |
+|---|---|---|
+| `fishbot_status` | 无 | 查询连接、位姿及运动状态 |
+| `fishbot_stop` | 无 | 停车并取消当前闭环动作 |
+| `fishbot_move` | `meters`、`speed=0.05` | 正距离前进、负距离后退，范围 ±10 米、非零；速度 0.02–0.20 米/秒 |
+| `fishbot_turn` | `degrees`、`angularSpeed=0.3` | 正角度左转、负角度右转，范围 ±180 度、非零；角速度 0.1–1.0 弧度/秒 |
+
+单次转角限制对应当前 XRCE 实现；更大转角应拆成多个动作。小车本身没有避障功能。
+查询结果 `Ok=true` 仅表示协议调用成功；`active`、`cmd_vel_reader`、`odom_age_ms` 才用于判断小车是否就绪。
+界面的连接、位姿信息为最近一次查询快照，不会自动刷新。
+
+## 工具格式
+
+`Tools/` 保留参考目录中的 `IAgentTool` 属性及 `InvokeAsync(JsonElement, CancellationToken)` 契约，
+并采用同样的 `AgentTool(Delegate, name)`、`ToolSet`、`FishBotTools.AllTools`、`Description` 元数据和 JSON Schema 方式组织。
+界面自身也通过此工具接口调用，不绕过工具层。
+
+独立版本的 `AgentTool` 仅支持这四个工具所需的 double 参数和 `Task<FishBotResult>` 返回类型。
+为避免绑定模型 SDK，没有复制原项目的 OpenAI 专用转换方法；`GetToolDefinitionsJson()` 可导出名称、说明和参数 Schema。
+日后接入原模型项目时，可直接沿用其 `AgentTool` / `ToolSet` 实现并调整命名空间。
+
+```csharp
+using System.Text.Json;
+using FishBotToolPanel.Tools;
+
+ToolSet tools = FishBotTools.AllTools;
+IAgentTool status = tools.Tools.Single(tool => tool.Name == "fishbot_status");
+using JsonDocument arguments = JsonDocument.Parse("{}");
+object? result = await status.InvokeAsync(arguments.RootElement, CancellationToken.None);
+```
+
+`FishBotResult` 包含 `Ok`、`Response`、`Error`、`Status`、`StopConfirmed`。
+无效参数、连接错误和服务端失败返回明确结果；JSON 形状错误或缺少必填参数由工具适配层抛出参数异常，界面捕获显示。
+
+## 构建与测试
+
+需要 .NET 8 SDK；已构建程序需要 .NET 8 Windows Desktop Runtime。
 
 ```powershell
-cd "C:\Users\kw188\Desktop\ros小车\xrce_windows_agent"
-python start_fishbot.py          # 一键：后台 agent + 前台 WASD 遥控
+dotnet build .\FishBotToolPanel.csproj -c Release
+dotnet run --project .\tests\FishBotToolPanel.Tests.csproj -c Release
 ```
 
-`start_fishbot.py` 会打印本机 IP、后台启动 agent、等 8898 控制口就绪后进入 WASD，
-退出（X / Ctrl+C）时自动关闭 agent。`python start_fishbot.py --check` 只做启动检查。
-
-也可以分开手动运行：
-
-```powershell
-python -m unittest discover -s tests -v     # 7 项单测
-python -m xrce.agent --host 0.0.0.0 --port 8888
-```
-
-另开一个终端遥控：
-
-```powershell
-python tools\teleop_wasd.py
-```
-
-或单条指令：
-
-```powershell
-python tools\send_cmd.py 0.05 0 0.4      # 前进约 2 cm
-python tools\send_cmd.py 0 0.3 0.4       # 左转
-python tools\send_cmd.py 0 -0.3 0.4      # 右转
-python tools\send_cmd.py -0.05 0 0.4     # 后退
-```
-
-主控板配置：WiFi 与电脑同一网络；上位机 IP = 电脑当前 WLAN 地址（本次 `10.251.213.107`）；端口 8888。
-
-## 关键协议要点（抓包确认）
-
-1. `GET_INFO`（预会话，session 0x80）的 INFO 应答：`BaseObjectReply = 00 00`。
-2. `GET_INFO`（会话内，session 0x81）的 INFO 应答：`BaseObjectReply = 00 01`
-   —— 这一字节不对，客户端会在 4–20 秒后删除全部实体并重建。
-3. `STATUS_AGENT` payload 固定 11 字节：`00 00 "XRCE" 01 00 01 0F 00`。
-4. stream 0 的消息序列号恒为 0；可靠流用 0x80，STATUS 回在同一条流上。
-5. `DELETE` 必须回 `STATUS OK`；`TIMESTAMP` 必须回 24 字节 `TIMESTAMP_REPLY`。
-6. `/cmd_vel` 的 DataReader 为 `0x0006`，通过主动 `DATA`(0x09) 下发 48 字节 Twist CDR。
-
-## 自测
-
-```powershell
-python tools\selftest_client.py 127.0.0.1 8888
-```
-
-期望输出：agent 解析出 `client_key`/`session_id`，并回 STATUS_AGENT（25 字节）。
-
-## 文件
-
-```
-xrce/
-  frame.py     消息头、子消息、ID 常量
-  cdr.py       CDR 读写、Twist 序列化
-  agent.py     UDP agent 主体
-tools/
-  selftest_client.py   本地握手指令
-  decode_hex.py        解析任意十六进制报文
-docs/
-  protocol_notes.md    协议字段与字节示例
-  omg_spec_extract.txt OMG 规范文本（输入资料）
-tests/
-  test_codec.py
-```
-
-## 已知风险
-
-1. 规范 B.1 的 CREATE_CLIENT 长度（26）与字段合计（14/22）不一致，真实布局以抓包为准。
-2. 若客户端使用可靠流（streamId 128），需要实现 HEARTBEAT/ACKNACK。
-3. 部分 micro-ROS 客户端会发送 READ_DATA 轮询而非被动接收 DATA。
+离线测试使用临时回环端口，检查 TCP 协议、参数校验、错误处理、取消/超时补偿停车、工具定义和 JSON 调用，不连接默认控制口或实车。
+项目采用内置 Windows 控件；规范资料位于 `docs/csharp-wpf-standard/`。使用 .NET 8 是为了直接适配当前已安装的 SDK 与桌面运行时。

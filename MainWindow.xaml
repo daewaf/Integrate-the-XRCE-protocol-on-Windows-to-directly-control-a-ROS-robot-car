@@ -1,0 +1,89 @@
+<Window x:Class="FishBotToolPanel.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="FishBot 工具控制台" Width="940" Height="790" MinWidth="760" MinHeight="650"
+        FontFamily="Microsoft YaHei UI" FontSize="13" Background="#F7F8FA"
+        Closing="Window_Closing">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <!-- 标题与停车入口：运动时仍允许停车。 -->
+        <Grid Margin="0,0,0,18">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Text="FishBot 工具控制台" FontSize="25" FontWeight="SemiBold" />
+                <TextBlock Text="XRCE agent 请单独启动 · 本机控制口 127.0.0.1:8898" Style="{StaticResource Hint}" />
+            </StackPanel>
+            <Button x:Name="StopButton" Grid.Column="1" Content="立即停车" Background="#B42318" Foreground="White" FontSize="16" FontWeight="SemiBold" MinWidth="140" Click="StopButton_Click" AutomationProperties.AutomationId="StopButton" />
+        </Grid>
+        <!-- 状态信息：查询不会发送运动指令。 -->
+        <GroupBox Grid.Row="1" Header="连接与位姿">
+            <StackPanel>
+                <DockPanel>
+                    <Button x:Name="StatusButton" DockPanel.Dock="Right" Content="查询状态" Click="StatusButton_Click" AutomationProperties.AutomationId="StatusButton" />
+                    <StackPanel>
+                        <TextBlock x:Name="ConnectionText" Text="尚未查询" FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock x:Name="StateText" Text="运动状态：—" Style="{StaticResource Hint}" />
+                    </StackPanel>
+                </DockPanel>
+                <TextBlock x:Name="PoseText" Text="X：— m     Y：— m     朝向：— °" FontSize="17" Margin="0,14,0,0" />
+                <TextBlock x:Name="OdomText" Text="里程计：—     活跃会话：—" Style="{StaticResource Hint}" />
+            </StackPanel>
+        </GroupBox>
+        <!-- 运动输入：只允许一个运动调用，停车按钮保持独立。 -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+            <GroupBox Header="前进 / 后退">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="14" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="距离（米）" Margin="0,0,0,6" />
+                            <TextBox x:Name="DistanceInput" Text="0.20" AutomationProperties.AutomationId="DistanceInput" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="速度（米/秒）" Margin="0,0,0,6" />
+                            <TextBox x:Name="SpeedInput" Text="0.05" AutomationProperties.AutomationId="SpeedInput" />
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Text="正数前进，负数后退；距离 ±10 m，速度 0.02–0.20 m/s。" Style="{StaticResource Hint}" />
+                    <Button x:Name="MoveButton" Content="执行位移" Margin="0,12,0,0" Click="MoveButton_Click" AutomationProperties.AutomationId="MoveButton" />
+                </StackPanel>
+            </GroupBox>
+            <GroupBox Grid.Column="2" Header="原地转向">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="14" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="转角（度）" Margin="0,0,0,6" />
+                            <TextBox x:Name="AngleInput" Text="90" AutomationProperties.AutomationId="AngleInput" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="角速度（弧度/秒）" Margin="0,0,0,6" />
+                            <TextBox x:Name="AngularSpeedInput" Text="0.30" AutomationProperties.AutomationId="AngularSpeedInput" />
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Text="正数左转，负数右转；转角 ±180°，角速度 0.1–1.0 rad/s。" Style="{StaticResource Hint}" />
+                    <Button x:Name="TurnButton" Content="执行转向" Margin="0,12,0,0" Click="TurnButton_Click" AutomationProperties.AutomationId="TurnButton" />
+                </StackPanel>
+            </GroupBox>
+        </Grid>
+        <!-- 调用结果与工具定义，便于查看请求、响应和失败原因。 -->
+        <Grid Grid.Row="3">
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+            <TextBlock x:Name="MessageText" Text="就绪。请先查询状态，再执行运动。" TextWrapping="Wrap" Margin="0,0,0,10" />
+            <TabControl Grid.Row="1">
+                <TabItem Header="调用记录">
+                    <TextBox x:Name="LogOutput" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontFamily="Consolas, Microsoft YaHei UI" AutomationProperties.AutomationId="LogOutput" />
+                </TabItem>
+                <TabItem Header="工具定义">
+                    <TextBox x:Name="SchemaOutput" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" />
+                </TabItem>
+            </TabControl>
+        </Grid>
+    </Grid>
+</Window>
